@@ -63,35 +63,11 @@
 ;;
 
 
-(defun found-let ()
-  (looking-at "\\s(let"))
-  
-
 (defun try-go-up ()
   (condition-case nil
       (up-list -1)
-    (error
-     (error "Not in a \"let\" form")))
+    (error "Form does not match"))
   t)
-
-(defun find-let ()
-  (while
-      (if (found-let)
-          nil
-        (try-go-up)
-        ))
-  t)
-
-(defun goto-next-pair ()
-  (interactive)
-  (condition-case nil
-      (progn
-        (forward-sexp)
-        (forward-sexp)
-        (forward-sexp)
-        (backward-sexp)
-        t)
-    (error nil)))
 
 (defun get-width ()
   (save-excursion
@@ -99,65 +75,37 @@
       (forward-sexp)
       (- (point) p))))
 
-(defun calc-width ()
-  (save-excursion
-    (let ((width 0))
-      (while (progn
-               (if (> (get-width) width)
-                   (setq width (get-width)))
-               (goto-next-pair)))
-      width)))
-
-(defun respace-single-let (max-width)
-  (save-excursion
-    (let (p current-width difference)
-      (setq p (point))
-      (forward-sexp)
-      (forward-sexp)
-      (backward-sexp)
-      (setq current-width (- (- (point) p) 1)
-            difference    (- max-width current-width))
-      
-      (cond ((> difference 0)
-             (insert (make-string difference ? )))
-            ((< difference 0)
-             (delete-backward-char (abs difference))))
-      
-      )))
-
-(defun respace-let (width)
-  (while (progn
-           (respace-single-let width)
-           (goto-next-pair))))
-
-(defun align-let ()
-  ;; move to start of [
-  (down-list 2)
-  (let ((w (calc-width)))
-    (respace-let w)
-    ))
-
-(defun align-cljlet ()
-  (interactive)
-  (save-excursion
-    (if (find-let)
-        (align-let))))
-
-(defun find-defroutes ()
-  (while
-      (if (looking-at "\\s(defroutes")
-          nil
-        (try-go-up)))
+(defun find-start (regexp)
+  (while (if (looking-at regexp)
+             nil
+           (try-go-up)))
   t)
 
-(defun respace-single-route (widths)
-  (if (test-fn)
+(defun goto-next-row (next-row)
+  (interactive)
+  (condition-case nil
+      (progn
+        (funcall next-row)
+        t)
+    (error nil)))
+
+(defun next-sexp ()
+  (forward-sexp)
+  (forward-sexp)
+  (backward-sexp))
+
+(defun calc-width (test next-row)
+  (save-excursion
+    (loop collect (if (funcall test)
+                      (loop collect (get-width) while (next-sexp)))
+          while (goto-next-row next-row))))
+
+(defun respace-row (widths test)
+  (if (funcall test)
       (save-excursion
         (loop for w in widths do
               (let ((p (point)))
-                (forward-sexp)
-                (forward-sexp)
-                (backward-sexp)
+                (next-sexp)
                 (let* ((current-width (- (- (point) p) 1))
                        (difference    (- w current-width)))
                   (cond ((> difference 0)
@@ -165,39 +113,8 @@
                         ((< difference 0)
                          (delete-backward-char (abs difference))))))))))
 
-(defun goto-next-route ()
-  (interactive)
-  (condition-case nil
-      (progn
-        (backward-up-list)
-        (forward-sexp)
-        (forward-sexp)
-        (backward-sexp)
-        (down-list)
-        t)
-    (error nil)))
-
-(defun goto-next-route-part ()
-  (interactive)
-  (condition-case nil
-      (progn
-        (forward-sexp)
-        (forward-sexp)
-        (backward-sexp)
-        t)
-    (error nil)))
-
-(defun respace-defroutes (max-widths)
-  (loop do (respace-single-route max-widths) while (goto-next-route)))
-
-(defun test-fn ()
-  (memq (symbol-at-point) '(GET POST)))
-
-(defun calc-width-defroutes ()
-  (save-excursion
-    (loop collect (if (test-fn)
-                      (loop collect (get-width) while (goto-next-route-part)))
-          while (goto-next-route))))
+(defun respace-rows (widths test next-row)
+  (loop do (respace-row widths test) while (goto-next-row next-row)))
 
 (defun max-widths (widths)
   (loop for n from 0 to (- (length (first widths)) 1)
@@ -207,15 +124,44 @@
                                             (nth n coll)))
                                         widths))))
 
-(defun do-align-defroutes ()
-  (down-list 2)
-  (respace-defroutes (butlast (max-widths (calc-width-defroutes)))))
-
-(defun align-defroutes ()
+(defun align-section (start goto-start test next-row)
   (interactive)
   (save-excursion
-    (if (find-defroutes)
-        (do-align-defroutes))))
+    (if (find-start start)
+        (progn (funcall goto-start)
+               (respace-rows (butlast (max-widths (calc-width test next-row)))
+                             test next-row)))))
+
+(defmacro* defalign (name
+                     &key
+                     start
+                     next-row
+                     (test (lambda () t))
+                     (goto-start (lambda ()
+                                   (down-list 2))))
+  `(defun ,(intern (concat "align-" (symbol-name name)))
+     ()
+     (interactive)
+     (align-section ,start ,goto-start ,test ,next-row)))
+
+(defalign cljlet
+  :start "\\s(let"
+  :next-row (lambda ()
+              (forward-sexp)
+              (forward-sexp)
+              (forward-sexp)
+              (backward-sexp)))
+
+(defalign defroutes
+  :start "\\s(defroutes"
+  :next-row (lambda ()
+              (backward-up-list)
+              (forward-sexp)
+              (forward-sexp)
+              (backward-sexp)
+              (down-list))
+  :test (lambda ()
+          (memq (symbol-at-point) '(GET POST))))
 
 (provide 'align-cljlet)
 
