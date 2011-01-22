@@ -143,6 +143,79 @@
     (if (find-let)
         (align-let))))
 
+(defun find-defroutes ()
+  (while
+      (if (looking-at "\\s(defroutes")
+          nil
+        (try-go-up)))
+  t)
+
+(defun respace-single-route (widths)
+  (if (test-fn)
+      (save-excursion
+        (loop for w in widths do
+              (let ((p (point)))
+                (forward-sexp)
+                (forward-sexp)
+                (backward-sexp)
+                (let* ((current-width (- (- (point) p) 1))
+                       (difference    (- w current-width)))
+                  (cond ((> difference 0)
+                         (insert (make-string difference 32))) 
+                        ((< difference 0)
+                         (delete-backward-char (abs difference))))))))))
+
+(defun goto-next-route ()
+  (interactive)
+  (condition-case nil
+      (progn
+        (backward-up-list)
+        (forward-sexp)
+        (forward-sexp)
+        (backward-sexp)
+        (down-list)
+        t)
+    (error nil)))
+
+(defun goto-next-route-part ()
+  (interactive)
+  (condition-case nil
+      (progn
+        (forward-sexp)
+        (forward-sexp)
+        (backward-sexp)
+        t)
+    (error nil)))
+
+(defun respace-defroutes (max-widths)
+  (loop do (respace-single-route max-widths) while (goto-next-route)))
+
+(defun test-fn ()
+  (memq (symbol-at-point) '(GET POST)))
+
+(defun calc-width-defroutes ()
+  (save-excursion
+    (loop collect (if (test-fn)
+                      (loop collect (get-width) while (goto-next-route-part)))
+          while (goto-next-route))))
+
+(defun max-widths (widths)
+  (loop for n from 0 to (- (length (first widths)) 1)
+        collecting (apply #'max (mapcar (lambda (coll)
+                                          (if (< (length coll) (+ 1 n))
+                                              1
+                                            (nth n coll)))
+                                        widths))))
+
+(defun do-align-defroutes ()
+  (down-list 2)
+  (respace-defroutes (butlast (max-widths (calc-width-defroutes)))))
+
+(defun align-defroutes ()
+  (interactive)
+  (save-excursion
+    (if (find-defroutes)
+        (do-align-defroutes))))
 
 (provide 'align-cljlet)
 
