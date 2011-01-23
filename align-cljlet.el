@@ -64,104 +64,116 @@
 
 
 (defun try-go-up ()
+  "move point up to parent expression"
   (condition-case nil
       (up-list -1)
     (error "Form does not match"))
   t)
 
 (defun get-width ()
+  "return width of expression starting at point"
   (save-excursion
-    (let ((p (point)))
+    (let ((p (current-column)))
       (forward-sexp)
-      (- (point) p))))
+      (- (current-column) p))))
 
 (defun find-start (regexp)
+  "find start of expression matching regexp"
   (while (if (looking-at regexp)
              nil
            (try-go-up)))
   t)
 
-(defun goto-next-row (next-row)
+(defun goto-next (next-function)
+  "calls function `next-function`"
   (interactive)
   (condition-case nil
       (progn
-        (funcall next-row)
+        (funcall next-function)
         t)
     (error nil)))
 
 (defun next-sexp ()
+  "moves point forward an expression"
   (forward-sexp)
   (forward-sexp)
   (backward-sexp))
 
-(defun calc-width (test next-row)
+(defun calc-widths (test next-row max-cols) 
+  "returns list of list of widths of expressions for rows that pass `test` function"
   (save-excursion
     (loop collect (if (funcall test)
-                      (loop collect (get-width) while (next-sexp)))
-          while (goto-next-row next-row))))
+                      (loop for i from 1
+                            collect (get-width)
+                            while (and (< i max-cols) (goto-next #'next-sexp))
+))
+          while (goto-next next-row))))
 
 (defun respace-row (widths test)
+  "inserts/removes spaces based on `widths` list"
   (if (funcall test)
       (save-excursion
         (loop for w in widths do
-              (let ((p (point)))
-                (next-sexp)
-                (let* ((current-width (- (- (point) p) 1))
+              (let ((p (current-column)))
+                (goto-next #'next-sexp)
+                (let* ((current-width (1- (- (current-column) p)))
                        (difference    (- w current-width)))
                   (cond ((> difference 0)
-                         (insert (make-string difference 32))) 
+                         (insert (make-string difference ? ))) 
                         ((< difference 0)
                          (delete-backward-char (abs difference))))))))))
 
 (defun respace-rows (widths test next-row)
-  (loop do (respace-row widths test) while (goto-next-row next-row)))
+  (loop do (respace-row widths test) while (goto-next next-row)))
 
 (defun max-widths (widths)
-  (loop for n from 0 to (- (length (first widths)) 1)
+  "returns list of max widths for each expression column given `widths` list of lists"
+  (loop for n from 0 to (1- (length (first widths)))
         collecting (apply #'max (mapcar (lambda (coll)
-                                          (if (< (length coll) (+ 1 n))
+                                          (if (< (length coll) (1+ n))
                                               1
                                             (nth n coll)))
                                         widths))))
 
-(defun align-section (start goto-start test next-row)
+(defun align-section (start goto-start test next-row max-cols)
+  "worker. tries to align based on `start` regexp, `goto-start`
+function, `test` function, and `next-row` function"
   (interactive)
   (save-excursion
     (if (find-start start)
         (progn (funcall goto-start)
-               (respace-rows (butlast (max-widths (calc-width test next-row)))
+               (respace-rows (butlast (max-widths (calc-widths test next-row max-cols)))
                              test next-row)))))
 
-(defmacro* defalign (name
-                     &key
-                     start
-                     next-row
-                     (test (lambda () t))
-                     (goto-start (lambda ()
-                                   (down-list 2))))
-  `(defun ,(intern (concat "align-" (symbol-name name)))
-     ()
-     (interactive)
-     (align-section ,start ,goto-start ,test ,next-row)))
+(defun default-goto-start ()
+  (down-list 2))
 
-(defalign cljlet
-  :start "\\s(let"
-  :next-row (lambda ()
-              (forward-sexp)
-              (forward-sexp)
-              (forward-sexp)
-              (backward-sexp)))
+(defun default-test () t)
 
-(defalign defroutes
-  :start "\\s(defroutes"
-  :next-row (lambda ()
-              (backward-up-list)
-              (forward-sexp)
-              (forward-sexp)
-              (backward-sexp)
-              (down-list))
-  :test (lambda ()
-          (memq (symbol-at-point) '(GET POST))))
+(defun let-next-row ()
+  (forward-sexp)
+  (forward-sexp)
+  (forward-sexp)
+  (backward-sexp))
+
+(defun align-cljlet ()
+  (interactive)
+  (align-section "\\s(let" #'default-goto-start #'default-test #'let-next-row 2))
+
+(defun defroutes-next-row ()
+  (backward-up-list)
+  (forward-sexp)
+  (forward-sexp)
+  (backward-sexp)
+  (down-list))
+
+(defun defroutes-test ()
+  (memq (symbol-at-point) '(GET POST)))
+
+(defun align-defroutes ()
+  (interactive)
+  (align-section "\\s(defroutes" #'default-goto-start #'defroutes-test
+                 #'defroutes-next-row 100))
 
 (provide 'align-cljlet)
 
