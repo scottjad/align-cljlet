@@ -99,29 +99,32 @@
   (forward-sexp)
   (backward-sexp))
 
+(defun calc-widths-row (test max-cols)
+  (if (funcall test)
+      (loop for i from 1
+            collect (get-width)
+            while (and (< i max-cols) (goto-next #'next-sexp)))))
+
 (defun calc-widths (test next-row max-cols) 
   "returns list of list of widths of expressions for rows that pass `test` function"
   (save-excursion
-    (loop collect (if (funcall test)
-                      (loop for i from 1
-                            collect (get-width)
-                            while (and (< i max-cols) (goto-next #'next-sexp))
-))
+    (loop collect (calc-widths-row test max-cols)
           while (goto-next next-row))))
 
 (defun respace-row (widths test)
   "inserts/removes spaces based on `widths` list"
-  (if (funcall test)
-      (save-excursion
-        (loop for w in widths do
-              (let ((p (current-column)))
-                (goto-next #'next-sexp)
-                (let* ((current-width (1- (- (current-column) p)))
-                       (difference    (- w current-width)))
-                  (cond ((> difference 0)
-                         (insert (make-string difference ? ))) 
-                        ((< difference 0)
-                         (delete-backward-char (abs difference))))))))))
+  (save-excursion
+    (if (funcall test)
+        (save-excursion
+          (loop for w in widths do
+                (let ((p (current-column)))
+                  (goto-next #'next-sexp)
+                  (let* ((current-width (1- (- (current-column) p)))
+                         (difference    (- w current-width)))
+                    (cond ((> difference 0)
+                           (insert (make-string difference ? ))) 
+                          ((< difference 0)
+                           (delete-backward-char (abs difference)))))))))))
 
 (defun respace-rows (widths test next-row)
   (loop do (respace-row widths test) while (goto-next next-row)))
@@ -129,13 +132,13 @@
 (defun max-widths (widths)
   "returns list of max widths for each expression column given `widths` list of lists"
   (loop for n from 0 to (1- (length (first widths)))
-        collecting (apply #'max (mapcar (lambda (coll)
-                                          (if (< (length coll) (1+ n))
-                                              1
-                                            (nth n coll)))
-                                        widths))))
+        collect (apply #'max (mapcar (lambda (coll)
+                                       (if (< (length coll) (1+ n))
+                                           1
+                                         (nth n coll)))
+                                     widths))))
 
-(defun align-section (start goto-start test next-row max-cols)
+(defun align-section (start goto-start test next-row max-cols &optional argh)
   "worker. tries to align based on `start` regexp, `goto-start`
 function, `test` function, and `next-row` function"
   (interactive)
@@ -143,22 +146,22 @@ function, `test` function, and `next-row` function"
     (if (find-start start)
         (progn (funcall goto-start)
                (respace-rows (butlast (max-widths (calc-widths test next-row max-cols)))
-                             test next-row)))))
+                             test (or argh next-row))))))
 
 (defun default-goto-start ()
   (down-list 2))
 
 (defun default-test () t)
 
-(defun let-next-row ()
+(defun argh ()
+  "the only excuse for this is that there was a wierd bug with
+let that I couldn't find and I got tired of looking. for some reason next-sexp wasn't working as next-row arg to respace-rows "
   (forward-sexp)
-  (forward-sexp)
-  (forward-sexp)
-  (backward-sexp))
+  (next-sexp))
 
 (defun align-cljlet ()
   (interactive)
-  (align-section "\\s(let" #'default-goto-start #'default-test #'let-next-row 2))
+  (align-section "\\s(let" #'default-goto-start #'default-test #'next-sexp 2 #'argh))
 
 (defun defroutes-next-row ()
   (backward-up-list)
@@ -177,3 +180,7 @@ function, `test` function, and `next-row` function"
 
 (provide 'align-cljlet)
 
+(defun align-map ()
+  (interactive)
+  (align-section "{" (lambda () (forward-char)) #'default-test
+                 #'next-sexp 2 #'argh))
